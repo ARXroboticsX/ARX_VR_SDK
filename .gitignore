@@ -2,6 +2,7 @@ unity_rostopic/build/
 unity_rostopic/devel/
 unity_rostopic/.catkin_workspace
 
+**/log
 # Build and Release Folders
 bin-debug/
 bin-release/
