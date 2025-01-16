@@ -3,49 +3,58 @@
 #include "vr_serial/serial_parser.hpp"
 #include <iostream>
 #include <dirent.h>
-#include "arm_control/msg/pos_cmd.hpp"  // 包含自定义消息
+#include <filesystem>
+#include "arm_control/msg/pos_cmd.hpp"
 
-// 获取所有串口设备
-std::vector<std::string> get_serial_ports() {
-    std::vector<std::string> ports;
-    DIR *dir = opendir("/dev");
-    if (dir) {
-        struct dirent *entry;
-        while ((entry = readdir(dir)) != nullptr) {
-            if (entry->d_type == DT_CHR) {
-                std::string dev_name = entry->d_name;
-                if (dev_name.rfind("ttyACM", 0) == 0 || dev_name.rfind("ttyUSB", 0) == 0) {
-                    ports.push_back("/dev/" + dev_name);
-                }
+namespace fs = std::filesystem;
+
+std::vector<std::string> findMatchedDevices() {
+    
+    std::string deviceDir = "/dev/serial/by-id/";
+    std::string matchStr = "USB_Single_Serial";
+
+    std::vector<std::string> matchedDevices;
+
+    for (const auto& entry : fs::directory_iterator(deviceDir)) {
+        std::string symlinkPath = entry.path();
+
+        char targetPath[1024];
+        ssize_t len = readlink(symlinkPath.c_str(), targetPath, sizeof(targetPath)-1);
+        if (len != -1) {
+            targetPath[len] = '\0';
+
+            std::cout << "DEV/tty NAME: " << symlinkPath << " -> " << targetPath << std::endl;
+            if (symlinkPath.find(matchStr) != std::string::npos) {
+                std::string absolutePath = fs::canonical(symlinkPath).string();
+                std::cout << "Matching device: " << absolutePath << std::endl;
+                matchedDevices.push_back(absolutePath);
             }
         }
-        closedir(dir);
     }
-    return ports;
+
+    return matchedDevices;
 }
 
 class SerialPortNode : public rclcpp::Node {
 public:
     SerialPortNode() : Node("serial_port_node") {
         
-        // 创建发布者
         vr_right_pub_ = this->create_publisher<arm_control::msg::PosCmd>("/ARX_VR_R", 10);
         vr_left_pub_ = this->create_publisher<arm_control::msg::PosCmd>("/ARX_VR_L", 10);
 
-        // 自动寻找串口设备
-        std::vector<std::string> serial_ports = get_serial_ports();
+        std::vector<std::string> serial_ports = findMatchedDevices();
+        
         if (serial_ports.empty()) {
             RCLCPP_ERROR(this->get_logger(), "No serial devices found.");
             rclcpp::shutdown();
         }
 
-        // 假设选择第一个串口设备
         std::string port = serial_ports[0];
+        std::cout << "device choose: " << port << std::endl;
 
-        // 初始化 SerialPort
         Spc = std::make_unique<drivers::serial_driver::SerialPort>(
             ctx, port, drivers::serial_driver::SerialPortConfig(
-                921600,  // 波特率
+                921600,
                 drivers::serial_driver::FlowControl::NONE,
                 drivers::serial_driver::Parity::NONE,
                 drivers::serial_driver::StopBits::ONE
@@ -61,7 +70,6 @@ public:
             RCLCPP_INFO(this->get_logger(), "%s is opened.", port.c_str());
         }
 
-        // 定时器
         timer_ = this->create_wall_timer(
             std::chrono::milliseconds(2), std::bind(&SerialPortNode::readSerialData, this));
     }
