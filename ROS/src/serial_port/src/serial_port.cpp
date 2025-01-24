@@ -4,27 +4,37 @@
 #include <serial_port/serial_port.hpp>
 #include "vr_serial/serial_parser.hpp"  // 包含解析头文件
 #include <iostream>
+#include <filesystem>
 #include <pos_cmd_msg/PosCmd.h>
 #include <dirent.h>  // 用于读取目录
 
-// 获取所有串口设备
-std::vector<std::string> get_serial_ports() {
-    std::vector<std::string> ports;
-    DIR *dir = opendir("/dev");
-    if (dir) {
-        struct dirent *entry;
-        while ((entry = readdir(dir)) != nullptr) {
-            if (entry->d_type == DT_CHR) {  // 检查是否为字符设备
-                std::string dev_name = entry->d_name;
-                // 只匹配ttyACM和ttyUSB设备
-                if (dev_name.rfind("ttyACM", 0) == 0 || dev_name.rfind("ttyUSB", 0) == 0) {
-                    ports.push_back("/dev/" + dev_name);
-                }
+namespace fs = std::filesystem;
+
+std::vector<std::string> findMatchedDevices() {
+    
+    std::string deviceDir = "/dev/serial/by-id/";
+    std::string matchStr = "USB_Single_Serial";
+
+    std::vector<std::string> matchedDevices;
+
+    for (const auto& entry : fs::directory_iterator(deviceDir)) {
+        std::string symlinkPath = entry.path();
+
+        char targetPath[1024];
+        ssize_t len = readlink(symlinkPath.c_str(), targetPath, sizeof(targetPath)-1);
+        if (len != -1) {
+            targetPath[len] = '\0';
+
+            std::cout << "DEV/tty NAME: " << symlinkPath << " -> " << targetPath << std::endl;
+            if (symlinkPath.find(matchStr) != std::string::npos) {
+                std::string absolutePath = fs::canonical(symlinkPath).string();
+                std::cout << "Matching device: " << absolutePath << std::endl;
+                matchedDevices.push_back(absolutePath);
             }
         }
-        closedir(dir);
     }
-    return ports;
+
+    return matchedDevices;
 }
 
 int main(int argc, char **argv)
@@ -41,7 +51,7 @@ int main(int argc, char **argv)
     // 创建timeout
     serial::Timeout to = serial::Timeout::simpleTimeout(100);
     // 自动寻找串口设备
-    std::vector<std::string> serial_ports = get_serial_ports();
+    std::vector<std::string> serial_ports = findMatchedDevices();
     if (serial_ports.empty()) {
         ROS_ERROR("No serial devices found.");
         return -1;
